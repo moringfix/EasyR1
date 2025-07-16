@@ -93,7 +93,7 @@ class vLLMRollout(BaseRollout):
         self.use_tqdm = (self.rank == 0) and (not config.disable_tqdm)
         if config.tensor_parallel_size > torch.distributed.get_world_size():
             raise ValueError("Tensor parallelism size should be less than world size.")
-
+        print(f">>>>>>>>>>>>>>>>>>> tokens 长度 : {config.prompt_length + config.response_length}, <<<<<<<<<<<<<<<<<<<")
         if config.max_num_batched_tokens < config.prompt_length + config.response_length:
             raise ValueError("max_num_batched_tokens should be greater than prompt_length + response_length.")
 

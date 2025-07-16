@@ -115,6 +115,8 @@ class RLHFDataset(Dataset):
         self.answer_key = answer_key
         self.image_key = image_key
         self.video_key = video_key
+
+        # print(f">>>>>>>>>>>>>>>>>>>>>>>>> keys : {self.prompt_key}, {self.answer_key}, {self.image_key}, {self.video_key}")
         self.image_dir = image_dir
         self.video_fps = video_fps
         self.max_prompt_length = max_prompt_length
@@ -192,7 +194,13 @@ class RLHFDataset(Dataset):
             for image in images:
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
 
-            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            # model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            model_inputs = self.processor(
+                images=processed_images,
+                text=[prompt],
+                add_special_tokens=False,
+                return_tensors="pt",
+            )
             return model_inputs["input_ids"].size(-1) <= self.max_prompt_length
         elif self.video_key in example:
             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
@@ -202,10 +210,17 @@ class RLHFDataset(Dataset):
 
             processed_videos = [] if len(videos) != 0 else None  # text-only data
             for video in videos:
+                # print(f"Processing video: {video}")
                 processed_videos.append(process_video(video, self.min_pixels, self.max_pixels, self.video_fps))
 
+            # model_inputs = self.processor(
+            #     videos=processed_videos, text=[prompt], add_special_tokens=False, return_tensors="pt"
+            # )
             model_inputs = self.processor(
-                videos=processed_videos, text=[prompt], add_special_tokens=False, return_tensors="pt"
+                videos=processed_videos,
+                text=[prompt],
+                add_special_tokens=False,
+                return_tensors="pt",
             )
             return model_inputs["input_ids"].size(-1) <= self.max_prompt_length
         else:
@@ -229,7 +244,14 @@ class RLHFDataset(Dataset):
             for image in images:
                 processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
 
-            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            # model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
+            model_inputs = self.processor(
+                images=processed_images,
+                text=[prompt],
+                add_special_tokens=False,
+                return_tensors="pt",
+            )
+
             input_ids = model_inputs.pop("input_ids")[0]
             attention_mask = model_inputs.pop("attention_mask")[0]
             example["multi_modal_data"] = {"images": images}
@@ -248,8 +270,14 @@ class RLHFDataset(Dataset):
                 processed_videos.append(processed_video)
                 video_fps_list.append(video_fps)
 
+            # model_inputs = self.processor(
+            #     videos=processed_videos, text=[prompt], add_special_tokens=False, return_tensors="pt"
+            # )
             model_inputs = self.processor(
-                videos=processed_videos, text=[prompt], add_special_tokens=False, return_tensors="pt"
+                videos=processed_videos,
+                text=[prompt],
+                add_special_tokens=False,
+                return_tensors="pt",
             )
             if "second_per_grid_ts" in self.processor.model_input_names:
                 model_inputs["second_per_grid_ts"] = [2.0 / video_sample_fps for video_sample_fps in video_fps_list]

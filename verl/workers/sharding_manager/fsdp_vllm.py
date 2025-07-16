@@ -25,6 +25,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataP
 from transformers import PreTrainedModel
 from vllm import LLM
 from vllm.distributed import parallel_state as vllm_ps
+import logging
 
 from ...protocol import DataProto, all_gather_data_proto
 from ...utils.fsdp_utils import load_fsdp_model, offload_fsdp_model
@@ -93,8 +94,40 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         if self.use_param_offload:
             load_fsdp_model(self.module)
 
+        # actor_weights = get_model_state_dict(self.module)
+        # actor_weights = self._rename_weight_keys(actor_weights, self.module._fsdp_wrapped_module)
+
         actor_weights = get_model_state_dict(self.module)
         actor_weights = self._rename_weight_keys(actor_weights, self.module._fsdp_wrapped_module)
+
+        # —— 清洗 PeftModel/FSDP wrapper 加的前缀 & 去掉 LoRA wrapper 产生的 base_layer & 丢弃 LoRA 自身权重 ——>
+        cleaned = {}
+        for key, tensor in actor_weights.items():
+            new_key = key
+            # 1) 剥除最深的 wrapper 前缀
+            for prefix in ("base_model.model.", "base_model.", "model."):
+                if new_key.startswith(prefix):
+                    new_key = new_key[len(prefix):]
+                    break
+            # 2) 去掉 PEFT 注入后 LoraLayer 的 base_layer 嵌套
+            new_key = new_key.replace(".base_layer", "")
+            # 3) 丢弃所有 LoRA 自身权重（不属于 vLLM 目标模型）
+            if "lora_" in new_key:
+                continue
+            cleaned[new_key] = tensor
+        actor_weights = cleaned
+        # <—— 完整清洗结束 ——>
+
+        logger = logging.getLogger("/root/autodl-tmp/home/lizhuohang/reaserch/ICLR2026/EasyR1/log/easy_r1.actor_model")
+        logger.setLevel(logging.INFO)
+        fh = logging.FileHandler("actor_model_layers.log", mode="w")
+        logger.addHandler(fh)
+
+        logger.info("=== Actor 模型结构 ===")
+        for i, name in enumerate(actor_weights.keys()):
+            logger.info(f"{i} | {name} | {actor_weights[name].shape}")
+        logger.removeHandler(fh)
+
         print_gpu_memory_usage("After gather model weights in sharding manager")
 
         model = self.inference_engine.llm_engine.model_executor.driver_worker.worker.model_runner.model

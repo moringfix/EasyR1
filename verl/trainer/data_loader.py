@@ -48,12 +48,16 @@ def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, proces
         train_dataloader_generator.manual_seed(config.seed)
         sampler = RandomSampler(data_source=train_dataset, generator=train_dataloader_generator)
     else:
+        print("Using SequentialSampler for training dataset------------------------")
         sampler = SequentialSampler(data_source=train_dataset)
 
     if config.mini_rollout_batch_size is not None:
         train_batch_size = config.mini_rollout_batch_size
     else:
         train_batch_size = config.rollout_batch_size
+    print(f"train_dataset 个数 : {train_dataset.__len__()}")
+    print(f"train_batch_size: {train_batch_size}")
+
 
     train_dataloader = StatefulDataLoader(
         dataset=train_dataset,
@@ -80,7 +84,7 @@ def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, proces
         max_pixels=config.max_pixels,
         filter_overlong_prompts=config.filter_overlong_prompts,
     )
-
+    print(f"val_dataset 个数 : {val_dataset.__len__()}")
     if config.val_batch_size == -1:
         val_batch_size = len(val_dataset)
     else:
@@ -95,7 +99,7 @@ def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, proces
         pin_memory=False,
         drop_last=False,
     )
-
+    print(f"train_dataloader 个数 :{ train_dataloader.__len__()}")
     assert len(train_dataloader) >= 1
     assert len(val_dataloader) >= 1
     print(f"Size of train dataloader: {len(train_dataloader)}")

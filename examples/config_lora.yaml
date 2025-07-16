@@ -9,9 +9,9 @@ data:
   video_fps: 1.0
   max_prompt_length: 6072
   max_response_length: 1024
-  rollout_batch_size: 2  #  to verl's data.train_batch_size
+  rollout_batch_size: 128  #  to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
-  val_batch_size: 2
+  val_batch_size: 128
   format_prompt: ./examples/format_prompt/math.jinja
   override_chat_template: null
   shuffle: true
@@ -34,8 +34,8 @@ algorithm:
 worker:
   actor:
     global_batch_size: 1  # equivalent to verl's actor.ppo_mini_batch_size
-    micro_batch_size_per_device_for_update: 4  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
-    micro_batch_size_per_device_for_experience: 16  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
+    micro_batch_size_per_device_for_update: 8  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
+    micro_batch_size_per_device_for_experience: 32  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
     max_grad_norm: 1.0
     padding_free: true
     ulysses_size: 1
@@ -43,26 +43,32 @@ worker:
       model_path: Qwen/Qwen2.5-3B-Instruct
       enable_gradient_checkpointing: true
       trust_remote_code: false
-      freeze_vision_tower: false
       override_config:
         torch_dtype: "bfloat16"           # 确保权重以 bf16 加载
         attn_implementation: "flash_attention_2"
+      use_lora: true         # 开启LoRA
+      lora_r: 16              # LoRA秩
+      lora_alpha: 32         # LoRA α
+      lora_dropout: 0.1      # LoRA dropout
+      lora_target_modules: ["q_proj","v_proj","lm_head","visual.proj"]
+      freeze_vision_tower: false
     optim:
       lr: 1.0e-6
       weight_decay: 1.0e-2
       strategy: adamw  # {adamw, adamw_bf16}
       lr_warmup_ratio: 0.0
     fsdp:
-      enable_full_shard: true
+      enable_full_shard: false
       enable_cpu_offload: false
       enable_rank0_init: true
+      torch_dtype: bf16  # 确保权重以 bf16 加载
       # mp_param_dtype: bf16        # 参数主副本 dtype
       # mp_buffer_dtype: bf16       # buffer dtype
       # mp_reduce_dtype: bf16       # grad reduce dtype
 
     offload:
-      offload_params: true  # true: more CPU memory; false: more GPU memory
-      offload_optimizer: true  # true: more CPU memory; false: more GPU memory
+      offload_params: false  # true: more CPU memory; false: more GPU memory
+      offload_optimizer: false  # true: more CPU memory; false: more GPU memory
 
   rollout:
     n: 16
@@ -81,8 +87,9 @@ worker:
   ref:
     fsdp:
       enable_full_shard: true
-      enable_cpu_offload: true  # true: more CPU memory; false: more GPU memory
+      enable_cpu_offload: false  # true: more CPU memory; false: more GPU memory
       enable_rank0_init: true
+      torch_dtype: bf16
       # mp_param_dtype: bf16
       # mp_buffer_dtype: bf16
       # mp_reduce_dtype: bf16
@@ -102,12 +109,12 @@ trainer:
   nnodes: 1
   n_gpus_per_node: 8
   max_try_make_batch: 20  # -1 means no limit
-  val_freq: 5  # -1 to disable
+  val_freq: 9  # -1 to disable
   val_before_train: true
   val_only: false
   val_generations_to_log: 3
-  save_freq: 300  # -1 to disable
-  save_limit: 5  # -1 to disable
+  save_freq: 9  # -1 to disable
+  save_limit: 6  # -1 to disable
   save_model_only: false
-  save_checkpoint_path: null
+  save_checkpoint_path: /root/autodl-tmp/home/lizhuohang/reaserch/ICLR2026/EasyR1/saves/lora
   load_checkpoint_path: null

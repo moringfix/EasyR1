@@ -173,15 +173,73 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError(f"Unknown architecture {architectures}.")
 
-    with torch.device("meta"):
-        model: PreTrainedModel = AutoClass.from_config(config, torch_dtype=torch.bfloat16)
+    # with torch.device("meta"):
+    #     model: PreTrainedModel = AutoClass.from_config(config, torch_dtype=torch.bfloat16)
 
-    assert isinstance(model, PreTrainedModel)
-    model.to_empty(device="cpu")
+    # assert isinstance(model, PreTrainedModel)
+    # model.to_empty(device="cpu")
 
-    print(f"Saving model to {hf_path}...")
-    model.save_pretrained(hf_path, state_dict=state_dict)
-    del state_dict, model
+    # print(f"Saving model to {hf_path}...")
+    # model.save_pretrained(hf_path, state_dict=state_dict)
+    # del state_dict, model
+
+    # === NEW: Detect whether this is a LoRA checkpoint =========================
+    adapter_cfg_path = os.path.join(hf_path, "adapter_config.json")
+    has_lora = os.path.exists(adapter_cfg_path) or any(
+        k.endswith(("lora_A.weight", "lora_B.weight")) for k in state_dict
+    )
+    print(f"LoRA detected: {has_lora}")
+
+    # ------- A) LoRA 分支 ------------------------------------------------------
+    if has_lora:
+        print(f"Detected LoRA checkpoint, merging LoRA into base model <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        from peft import PeftConfig, get_peft_model
+
+        # 1. 读取 LoRA 配置
+        peft_cfg = PeftConfig.from_pretrained(hf_path)
+
+        # 2. 用 meta device 构建 **空的** base 模型，节省内存
+        with torch.device("meta"):
+            base_model = AutoClass.from_config(config, torch_dtype=torch.bfloat16)
+        base_model.to_empty(device="cpu")
+
+        # 3. 给 base 模型插入 LoRA 结构
+        lora_model = get_peft_model(base_model, peft_cfg)
+
+        # 4. 加载合并后的 state_dict（含 base + LoRA）
+        _missing, _unexpected = lora_model.load_state_dict(state_dict, strict=False)
+        print(f"[merge] missing={len(_missing)}, unexpected={len(_unexpected)}")
+
+        # 5. 合并并卸载 LoRA
+        merged_model = lora_model.merge_and_unload()  # ← 关键一步
+
+        # 6. 保存到一个新目录（避免覆盖原文件）
+        step_id = local_dir.split("/")[-2].split("_")[-1]
+
+        out_dir = os.path.join(local_dir, f"huggingface_merged_{step_id}")
+        os.makedirs(out_dir, exist_ok=True)
+        print(f"Saving merged model to {out_dir}")
+        merged_model.save_pretrained(out_dir)         # 已含全部权重
+        # tokenizer 等直接复用原目录
+        from transformers import AutoTokenizer,AutoProcessor   
+        tok = AutoTokenizer.from_pretrained(hf_path)
+        tok.save_pretrained(out_dir)
+        if os.path.exists(os.path.join(hf_path, "preprocessor_config.json")):
+            proc = AutoProcessor.from_pretrained(hf_path, trust_remote_code=True)
+            proc.save_pretrained(out_dir)
+    # ------- B) 非 LoRA 分支 ---------------------------------------------------
+    else:
+        with torch.device("meta"):
+            model = AutoClass.from_config(config, torch_dtype=torch.bfloat16)
+        model.to_empty(device="cpu")
+
+        out_dir = os.path.join(local_dir, "huggingface_merged")
+        os.makedirs(out_dir, exist_ok=True)
+        print(f"Saving model to {out_dir}")
+        model.save_pretrained(out_dir, state_dict=state_dict)
+
+
+
 
     if args.hf_upload_path:
         upload_model_to_huggingface(hf_path, args.hf_upload_path)

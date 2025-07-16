@@ -112,12 +112,78 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         # wait for everyone to dump to local
         dist.barrier()
 
+        # if self.rank == 0:
+        #     hf_path = os.path.join(path, "huggingface")
+        #     os.makedirs(hf_path, exist_ok=True)
+        #     assert isinstance(self.model._fsdp_wrapped_module, PreTrainedModel)
+        #     self.model._fsdp_wrapped_module.config.save_pretrained(hf_path)
+        #     self.model._fsdp_wrapped_module.generation_config.save_pretrained(hf_path)
+        #     self.processing_class.save_pretrained(hf_path)
+
+
+        # if self.rank == 0:
+        #     # 最终将 huggingface checkpoint 写入到 path/huggingface
+        #     hf_path = os.path.join(path, "huggingface")
+        #     os.makedirs(hf_path, exist_ok=True)
+        #     # 支持 PreTrainedModel 或 PeftModel（LoRA）
+        #     from transformers import PreTrainedModel
+        #     try:
+        #         wrapped = self.model._fsdp_wrapped_module
+        #         # 普通模型
+        #         if isinstance(wrapped, PreTrainedModel):
+        #             model_to_save = wrapped
+        #         else:
+        #             # 如果是 LoRA 包装
+        #             from peft import PeftModel
+        #             if isinstance(wrapped, PeftModel):
+        #                 model_to_save = wrapped
+        #             else:
+        #                 raise AssertionError(f"不支持的模型类型：{type(wrapped)}，仅支持 PreTrainedModel 或 PeftModel")
+        #     except ImportError:
+        #         raise AssertionError("请确保 transformers 及 peft 已正确安装")
+
+        #     # 保存：PreTrainedModel 会保存全量权重，PeftModel 会保存 adapter 配置和权重
+        #     model_to_save.config.save_pretrained(hf_path)
+        #     # 如果有 generation_config，则也保存
+        #     if hasattr(model_to_save, "generation_config"):
+        #         model_to_save.generation_config.save_pretrained(hf_path)
+        #     # 保存 tokenizer/processor
+        #     self.processing_class.save_pretrained(hf_path)
+
         if self.rank == 0:
+            from peft import PeftModel
             hf_path = os.path.join(path, "huggingface")
             os.makedirs(hf_path, exist_ok=True)
-            assert isinstance(self.model._fsdp_wrapped_module, PreTrainedModel)
-            self.model._fsdp_wrapped_module.config.save_pretrained(hf_path)
-            self.model._fsdp_wrapped_module.generation_config.save_pretrained(hf_path)
+
+            wrapped = self.model._fsdp_wrapped_module
+            from transformers import PreTrainedModel
+            if isinstance(wrapped, PreTrainedModel):
+                model_to_save = wrapped
+            elif isinstance(wrapped, PeftModel):
+                model_to_save = wrapped
+            else:
+                raise AssertionError(f"Unsupported model type {type(wrapped)}")
+            print(f"[rank-{self.rank}]: Saving HuggingFace model to {os.path.abspath(hf_path)}.")
+            # （1）保存基础 config
+            model_to_save.config.save_pretrained(hf_path)
+            print(f"【debug】 11111111111111111111111111111111111111111111111111111")
+            # （2）如果是 LoRA，务必写出 adapter_config.json
+            if isinstance(model_to_save, PeftModel):
+                # 下面两句二选一即可
+                # ➤ 最简单：直接 save_pretrained 只写 LoRA adapter 文件（不会写 base 权重）
+                print(f"【debug】 22222222222222222222222222222222222222222222222222")
+                model_to_save.save_pretrained(hf_path, safe_serialization=False, state_dict=model_state_dict)
+                #   - 这会在 huggingface/ 产生 adapter_config.json 及 adapter_model.bin
+                #
+                # ➤ 或者：显式保存 peft_config
+                # model_to_save.peft_config.save_pretrained(hf_path)
+
+            # （3）保存 generation_config（有就写）
+            print(f"【debug】 33333333333333333333333333333333333333333333333333")
+            if hasattr(model_to_save, "generation_config"):
+                model_to_save.generation_config.save_pretrained(hf_path)
+            print(f"【debug】 44444444444444444444444444444444444444444444444444")  
+            # （4）保存 tokenizer / processor
             self.processing_class.save_pretrained(hf_path)
 
         dist.barrier()

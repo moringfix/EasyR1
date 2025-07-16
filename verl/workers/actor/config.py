@@ -17,7 +17,7 @@ Actor config
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 
 @dataclass
@@ -28,6 +28,14 @@ class ModelConfig:
     enable_gradient_checkpointing: bool = True
     trust_remote_code: bool = True
     freeze_vision_tower: bool = False
+
+    # NOTE LZH :新增 LoRA 配置项
+    use_lora: bool = False                 # 是否启用LoRA
+    lora_r: int = 16                        # LoRA秩（低阶矩阵秩）
+    lora_alpha: int = 32                   # LoRA缩放因子α
+    lora_dropout: float = 0.1              # LoRA dropout比例
+    lora_target_modules: Optional[List[str]] = None  # 指定应用LoRA的模块名称列表
+    # NOTE LZH :新增 LoRA 配置项【end】
 
     def post_init(self):
         if self.tokenizer_path is None:

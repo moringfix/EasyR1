@@ -191,6 +191,7 @@ class FSDPWorker(Worker):
             torch_dtype = torch.float32 if role != "ref" else torch.bfloat16
         else:
             torch_dtype = PrecisionType.to_dtype(fsdp_config.torch_dtype)
+        print(f"######################## 数据类型 : {torch_dtype} ########################")
 
         if role == "critic":
             auto_class = AutoModelForTokenClassification
@@ -200,6 +201,7 @@ class FSDPWorker(Worker):
             auto_class = AutoModelForCausalLM
 
         if (not fsdp_config.enable_rank0_init) or self.device_mesh.get_local_rank("fsdp") == 0:
+            print(f"######################## 数据类型 : {torch_dtype} ########################")
             model = auto_class.from_pretrained(
                 model_config.model_path,
                 config=self.model_config,
@@ -220,6 +222,39 @@ class FSDPWorker(Worker):
 
         model = cast(PreTrainedModel, model)  # lint
         model.tie_weights()  # avoid hanging
+
+        # NOTE LZH :新增 LoRA 配置项
+        if model_config.use_lora and role != "ref":
+            from peft import LoraConfig, get_peft_model
+            # 确定 LoRA 作用的模块。如果未指定则设定默认列表
+            target_modules = model_config.lora_target_modules or ["q_proj", "v_proj", "lm_head"]
+            lora_config = LoraConfig(
+                r=model_config.lora_r,
+                lora_alpha=model_config.lora_alpha,
+                target_modules=target_modules,
+                lora_dropout=model_config.lora_dropout,
+                bias="none"
+            )
+            model = get_peft_model(model, lora_config)
+            self.print_rank0("LoRA modules injected into model.")
+        # NOTE LZH :新增 LoRA 配置项【end】
+
+        # NOTE LZH :新增 LoRA 配置项
+        if model_config.use_lora and role != "ref":
+            # 冻结除 LoRA 参数外的所有参数
+            for name, param in model.named_parameters():
+                if "lora_" in name:
+                    continue  # LoRA 层权重保持可训练
+                if not ( model_config.freeze_vision_tower) and "visual" in name:
+                    continue  # 如果不想冻结视觉塔，并且当前参数属于视觉部分，则跳过冻结
+                param.requires_grad = False
+            # 由于部分参数被冻结，启用 FSDP 的 use_orig_params 以避免不兼容
+            fsdp_config.use_orig_params = True
+            self.print_rank0("Base model frozen, only LoRA parameters will be trained.")
+        # NOTE LZH :新增 LoRA 配置项【end】
+
+
+
         model = model.to(torch_dtype)
         if model_config.enable_gradient_checkpointing:
             model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -240,6 +275,22 @@ class FSDPWorker(Worker):
                 self.print_rank0("No vision tower found.")
 
         dist.barrier()
+
+        # # NOTE LZH :新增 LoRA 配置项
+        # if model_config.use_lora and role != "ref":
+        #     # 冻结除 LoRA 参数外的所有参数
+        #     for name, param in model.named_parameters():
+        #         if "lora_" in name:
+        #             continue  # LoRA 层权重保持可训练
+        #         if not self.config.actor.model.get("freeze_vision_tower", False) and "visual" in name:
+        #             continue  # 如果不想冻结视觉塔，并且当前参数属于视觉部分，则跳过冻结
+        #         param.requires_grad = False
+        #     # 由于部分参数被冻结，启用 FSDP 的 use_orig_params 以避免不兼容
+        #     fsdp_config.use_orig_params = True
+        #     self.print_rank0("Base model frozen, only LoRA parameters will be trained.")
+        # # NOTE LZH :新增 LoRA 配置项【end】
+
+
         print_model_size(model)
         print_gpu_memory_usage("After huggingface model init")
         mixed_precision = MixedPrecision(
@@ -501,11 +552,12 @@ class FSDPWorker(Worker):
 
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data=data)
-            with Timer(name="update_policy", logger=None) as timer:
+            with Timer(name="   ", logger=None) as timer:
                 metrics = self.actor.update_policy(data=data)
 
             delta_time = timer.last
             global_num_tokens = data.meta_info["global_token_num"]
+            print(f"######################### 开始更新 Actor #########################")
             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
             metrics["perf/mfu_actor"] = (
                 estimated_flops * self.config.actor.ppo_epochs / (promised_flops * self.world_size)

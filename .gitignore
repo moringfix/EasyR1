@@ -179,3 +179,9 @@ tensorboard_log/
 # data
 images/
 images*
+
+# resutl and model
+saves
+log
+data
+checkpoints
